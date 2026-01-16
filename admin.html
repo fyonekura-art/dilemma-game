@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>【管理】囚人のジレンマ - 分析・ランキング機能付</title>
+    <title>【管理】囚人のジレンマ - 最終完成版</title>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
     <style>
@@ -18,26 +18,26 @@
         .btn-green { background: #27ae60; }
         .btn-purple { background: #8e44ad; }
         .btn-red { background: #e74c3c; }
-        ul { padding-left: 20px; font-size: 0.9rem; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; color: white; }
         th, td { border: 1px solid #5d6d7e; padding: 8px; text-align: left; }
         th { background: #2c3e50; }
-    </small></style>
+        ul { padding-left: 20px; }
+    </style>
 </head>
 <body>
-    <h1>授業管理パネル (分析モード)</h1>
+    <h1>授業管理パネル (最終版)</h1>
     <p>接続数: <b id="student-count">0</b> | 状態: <b id="current-phase">待機中</b></p>
     
     <div class="controls">
-        <button class="btn-green" onclick="updatePhase('round1')">【1回戦】マッチング＆開始</button>
-        <button class="btn-purple" onclick="updatePhase('round2')">【2回戦】再マッチング＆開始</button>
+        <button class="btn-green" onclick="updatePhase('round1')">【1回戦】開始 (新マッチング)</button>
+        <button class="btn-purple" onclick="updatePhase('round2')">【2回戦】開始 (再マッチング)</button>
         <button class="btn-red" onclick="resetGame()">全リセット</button>
     </div>
 
     <div class="section">
         <h3>📊 懲役ランキング（ワースト順）</h3>
         <table id="ranking-table">
-            <thead><tr><th>順位</th><th>名前</th><th>1回戦</th><th>2回戦</th><th>合計懲役</th></tr></thead>
+            <thead><tr><th>順位</th><th>名前</th><th>1回戦</th><th>2回戦</th><th>合計</th></tr></thead>
             <tbody></tbody>
         </table>
     </div>
@@ -48,7 +48,7 @@
             <div id="betrayal-log"></div>
         </div>
         <div class="section">
-            <h3>🏠 各ルームの進捗</h3>
+            <h3>🏠 各ルーム進捗</h3>
             <div id="room-list" class="room-grid"></div>
         </div>
     </div>
@@ -77,7 +77,12 @@
 
     db.ref('rooms').on('value', snapshot => {
         const rooms = snapshot.val();
-        if(!rooms) return;
+        if(!rooms) {
+            document.querySelector('#ranking-table tbody').innerHTML = "";
+            document.getElementById('room-list').innerHTML = "";
+            document.getElementById('betrayal-log').innerHTML = "";
+            return;
+        }
 
         const listArea = document.getElementById('room-list');
         const rankingBody = document.querySelector('#ranking-table tbody');
@@ -85,7 +90,7 @@
         listArea.innerHTML = "";
         logArea.innerHTML = "";
         
-        let playerStats = {}; // IDごとの懲役集計
+        let playerStats = {}; 
         let logs = { round1: [], round2: [] };
 
         Object.keys(rooms).forEach(rId => {
@@ -97,7 +102,6 @@
             ['round1', 'round2'].forEach(rnd => {
                 const game = room[rnd];
                 if (!game) return;
-
                 const p1_c = game.p1_choice;
                 const p2_c = game.p2_choice;
                 statusHtml += `${rnd.slice(-1)}戦: <span class="status-dot ${p1_c?'done':'yet'}"></span><span class="status-dot ${p2_c?'done':'yet'}"></span><br>`;
@@ -112,16 +116,13 @@
                     const s1 = calc(p1_c, p2_c);
                     const s2 = calc(p2_c, p1_c);
 
-                    // 統計加算
-                    [room.p1, room.p2].forEach((id, idx) => {
-                        if (id === "CPU") return;
-                        if (!playerStats[id]) playerStats[id] = { name: studentNames[id]?.name, r1: "-", r2: "-", total: 0 };
-                        const score = (idx === 0) ? s1 : s2;
-                        playerStats[id][rnd === 'round1' ? 'r1' : 'r2'] = score + "年";
-                        playerStats[id].total += score;
+                    [ {id: room.p1, sc: s1}, {id: room.p2, sc: s2} ].forEach((p, idx) => {
+                        if (p.id === "CPU") return;
+                        if (!playerStats[p.id]) playerStats[p.id] = { name: studentNames[p.id]?.name, r1: "-", r2: "-", total: 0 };
+                        playerStats[p.id][rnd === 'round1' ? 'r1' : 'r2'] = p.sc + "年";
+                        playerStats[p.id].total += p.sc;
                     });
 
-                    // ログ作成
                     const n1 = studentNames[room.p1]?.name || "P1";
                     const n2 = room.p2 === "CPU" ? "CPU" : (studentNames[room.p2]?.name || "P2");
                     if (p1_c !== p2_c) {
@@ -135,12 +136,9 @@
             listArea.appendChild(card);
         });
 
-        // ランキング表示
         const sorted = Object.values(playerStats).sort((a, b) => b.total - a.total);
         rankingBody.innerHTML = sorted.map((p, i) => `<tr><td>${i+1}</td><td>${p.name}</td><td>${p.r1}</td><td>${p.r2}</td><td><b>${p.total}年</b></td></tr>`).join('');
-        
-        // ログ表示
-        logArea.innerHTML = `<b>1回戦:</b><ul>${logs.round1.join('') || "なし"}</ul><b>2回戦:</b><ul>${logs.round2.join('') || "なし"}</ul>`;
+        logArea.innerHTML = `<b>1回戦:</b><ul>${logs.round1.join('')}</ul><b>2回戦:</b><ul>${logs.round2.join('')}</ul>`;
     });
 
     async function updatePhase(phase) {
@@ -148,15 +146,28 @@
         const students = snapshot.val();
         if (!students) return alert("生徒がいません");
         const ids = Object.keys(students).sort(() => Math.random() - 0.5);
-        const rooms = {};
+        
+        // 過去の対戦結果を保持
+        const oldSnap = await db.ref('rooms').once('value');
+        const oldRooms = oldSnap.val() || {};
+        const newRooms = (phase === 'round2') ? oldRooms : {};
+
         for (let i = 0; i < ids.length; i += 2) {
             const rId = "room_" + (Math.floor(i/2) + 1);
             const p1 = ids[i], p2 = ids[i+1] || "CPU";
-            rooms[rId] = { p1, p2, [phase]: { p1_choice: null, p2_choice: (p2 === "CPU" ? "自白しない" : null) } };
+            
+            // CPUの手をランダムに決定 (自白する・しないを50%)
+            const cpuChoice = (Math.random() > 0.5) ? "自白しない" : "自白する";
+
+            newRooms[rId] = {
+                ...(newRooms[rId] || {}),
+                p1, p2,
+                [phase]: { p1_choice: null, p2_choice: (p2 === "CPU" ? cpuChoice : null) }
+            };
             db.ref(`presence/${p1}`).update({ roomId: rId, playerNum: 'p1' });
             if(p2 !== "CPU") db.ref(`presence/${p2}`).update({ roomId: rId, playerNum: 'p2' });
         }
-        await db.ref('rooms').set(rooms);
+        await db.ref('rooms').set(newRooms);
         await db.ref('gameMaster').update({ phase: phase });
     }
 
