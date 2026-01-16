@@ -2,134 +2,103 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>【管理画面】囚人のジレンマ実習</title>
+    <title>【管理】囚人のジレンマ実習 - 完成版</title>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
     <style>
         body { font-family: sans-serif; background: #2c3e50; color: white; padding: 20px; }
-        .container { max-width: 800px; margin: auto; background: #34495e; padding: 20px; border-radius: 10px; }
-        .stats-box { display: flex; gap: 20px; margin-bottom: 20px; }
-        .stat-card { flex: 1; background: #1abc9c; padding: 15px; border-radius: 8px; text-align: center; }
-        .controls { background: #ecf0f1; color: #333; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-        button { padding: 10px 20px; font-size: 1rem; cursor: pointer; border: none; border-radius: 5px; background: #3498db; color: white; margin: 5px; }
-        button:hover { opacity: 0.8; }
-        .room-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-        .room-card { background: #95a5a6; padding: 10px; border-radius: 5px; font-size: 0.8rem; }
+        .controls { background: white; color: #333; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .room-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+        .room-card { background: #ecf0f1; color: #333; padding: 10px; border-radius: 5px; border-left: 5px solid #bdc3c7; font-size: 0.85rem; }
+        .room-card.active { border-left-color: #27ae60; background: #fff; }
+        .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+        .done { background: #27ae60; }
+        .yet { background: #bdc3c7; border: 1px solid #7f8c8d; }
+        button { padding: 12px 20px; font-size: 1rem; cursor: pointer; border: none; border-radius: 5px; color: white; margin: 5px; font-weight: bold; }
+        .btn-blue { background: #3498db; }
+        .btn-green { background: #27ae60; }
+        .btn-purple { background: #8e44ad; }
+        .btn-red { background: #e74c3c; }
     </style>
 </head>
 <body>
-
-<div class="container">
     <h1>授業管理パネル</h1>
+    <p>接続中の生徒: <b id="student-count">0</b>人 | 現在の状態: <b id="current-phase">待機中</b></p>
     
-    <div class="stats-box">
-        <div class="stat-card">接続中の生徒<br><span id="student-count" style="font-size: 2rem;">0</span>人</div>
-        <div class="stat-card" style="background: #e67e22;">現在のフェーズ<br><span id="current-phase" style="font-size: 1.2rem;">待機中</span></div>
-    </div>
-
     <div class="controls">
-        <h3>進行コントロール</h3>
-        <button onclick="startMatching()">1. マッチング実行</button>
-        <button onclick="updatePhase('round1')" style="background: #27ae60;">2. 第1回戦 開始</button>
-        <button onclick="updatePhase('round2')" style="background: #27ae60;">3. 第2回戦 開始</button>
-        <button onclick="resetGame()" style="background: #e74c3c;">全リセット</button>
+        <button class="btn-green" onclick="updatePhase('round1')">【第1回戦】開始 (新マッチング)</button>
+        <button class="btn-purple" onclick="updatePhase('round2')">【第2回戦】開始 (席替えマッチング)</button>
+        <button class="btn-red" onclick="resetGame()">全データをリセット</button>
     </div>
 
-    <h3>対戦状況（Room一覧）</h3>
-    <div id="room-list" class="room-list"></div>
-</div>
+    <h3>各ルームの進捗 (●回答済 / ○未回答)</h3>
+    <div id="room-list" class="room-grid"></div>
 
 <script>
-   // Your web app's Firebase configuration
-
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
-
-const firebaseConfig = {
-
-  apiKey: "AIzaSyD_lw01IiPvvBjinfw2UZ9NuqqurGm5yIw",
-
-  authDomain: "prisonergame-27a20.firebaseapp.com",
-
-  databaseURL: "https://prisonergame-27a20-default-rtdb.firebaseio.com",
-
-  projectId: "prisonergame-27a20",
-
-  storageBucket: "prisonergame-27a20.firebasestorage.app",
-
-  messagingSenderId: "456926790656",
-
-  appId: "1:456926790656:web:7e59a56e6a68ed612444e5",
-
-  measurementId: "G-06PQ22W9JR"
-
-};
-
-    // ---------------------------------------------------
-
+    const firebaseConfig = {
+        apiKey: "AIzaSyD_lw01IiPvvBjinfw2UZ9NuqqurGm5yIw",
+        authDomain: "prisonergame-27a20.firebaseapp.com",
+        databaseURL: "https://prisonergame-27a20-default-rtdb.firebaseio.com",
+        projectId: "prisonergame-27a20",
+        storageBucket: "prisonergame-27a20.firebasestorage.app",
+        messagingSenderId: "456926790656",
+        appId: "1:456926790656:web:7e59a56e6a68ed612444e5"
+    };
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
-    // 接続中の生徒を監視
-    db.ref('presence').on('value', (snapshot) => {
-        const students = snapshot.val() || {};
-        document.getElementById('student-count').innerText = Object.keys(students).length;
-    });
+    db.ref('presence').on('value', s => document.getElementById('student-count').innerText = s.numChildren());
+    db.ref('gameMaster/phase').on('value', s => document.getElementById('current-phase').innerText = s.val() || "待機中");
 
-    // 進行状況の監視
-    db.ref('gameMaster').on('value', (snapshot) => {
-        const data = snapshot.val() || {};
-        document.getElementById('current-phase').innerText = data.phase || "待機中";
-    });
+    db.ref('rooms').on('value', snapshot => {
+        const rooms = snapshot.val();
+        const listArea = document.getElementById('room-list');
+        listArea.innerHTML = "";
+        if(!rooms) return;
 
-    // フェーズ更新関数
-    function updatePhase(phaseName) {
-        db.ref('gameMaster').update({ phase: phaseName });
-    }
-
-    // マッチングロジック
-    function startMatching() {
-        db.ref('presence').once('value', (snapshot) => {
-            const students = snapshot.val();
-            if (!students) return alert("生徒がまだ接続していません");
-            
-            const studentIds = Object.keys(students);
-            // シャッフル
-            for (let i = studentIds.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [studentIds[i], studentIds[j]] = [studentIds[j], studentIds[i]];
-            }
-
-            const rooms = {};
-            for (let i = 0; i < studentIds.length; i += 2) {
-                const roomId = "room_" + (i / 2 + 1);
-                const p1 = studentIds[i];
-                const p2 = studentIds[i+1] || "CPU"; // 奇数の場合
-                
-                rooms[roomId] = {
-                    p1: p1,
-                    p2: p2,
-                    round1: { p1_choice: null, p2_choice: (p2==="CPU" ? "自白しない" : null) },
-                    round2: { p1_choice: null, p2_choice: (p2==="CPU" ? "自白しない" : null) }
-                };
-                
-                // 生徒側に自分の部屋を通知
-                db.ref(`presence/${p1}`).update({ roomId: roomId, playerNum: 'p1' });
-                if (p2 !== "CPU") {
-                    db.ref(`presence/${p2}`).update({ roomId: roomId, playerNum: 'p2' });
-                }
-            }
-            db.ref('rooms').set(rooms);
-            updatePhase('matched');
-            alert("マッチング完了！");
+        db.ref('gameMaster/phase').once('value', pSnap => {
+            const phase = pSnap.val();
+            Object.keys(rooms).forEach(rId => {
+                const room = rooms[rId];
+                const p1_done = room[phase]?.p1_choice ? "done" : "yet";
+                const p2_done = room[phase]?.p2_choice ? "done" : "yet";
+                const card = document.createElement('div');
+                card.className = "room-card" + (room[phase] ? " active" : "");
+                card.innerHTML = `<b>${rId.toUpperCase()}</b><br>
+                    <span class="status-dot ${p1_done}"></span>P1 
+                    <span class="status-dot ${p2_done}"></span>P2`;
+                listArea.appendChild(card);
+            });
         });
+    });
+
+    async function updatePhase(phase) {
+        const snapshot = await db.ref('presence').once('value');
+        const students = snapshot.val();
+        if (!students) return alert("生徒が接続していません");
+        
+        const ids = Object.keys(students);
+        ids.sort(() => Math.random() - 0.5);
+
+        const rooms = {};
+        for (let i = 0; i < ids.length; i += 2) {
+            const rId = "room_" + (Math.floor(i/2) + 1);
+            const p1 = ids[i];
+            const p2 = ids[i+1] || "CPU";
+            
+            rooms[rId] = {
+                p1, p2,
+                [phase]: { p1_choice: null, p2_choice: (p2 === "CPU" ? "自白しない" : null) }
+            };
+            db.ref(`presence/${p1}`).update({ roomId: rId, playerNum: 'p1' });
+            if(p2 !== "CPU") db.ref(`presence/${p2}`).update({ roomId: rId, playerNum: 'p2' });
+        }
+
+        await db.ref('rooms').set(rooms);
+        await db.ref('gameMaster').update({ phase: phase });
     }
 
-    function resetGame() {
-        if(confirm("全てのデータをリセットしますか？")) {
-            db.ref('/').remove();
-            updatePhase('waiting');
-        }
-    }
+    function resetGame() { if(confirm("全データを消去して待機状態に戻しますか？")) db.ref('/').set({gameMaster:{phase:'waiting'}}); }
 </script>
 </body>
 </html>
