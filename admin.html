@@ -2,37 +2,56 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>【管理】囚人のジレンマ実習 - 完成版</title>
+    <title>【管理】囚人のジレンマ - 分析・ランキング機能付</title>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
     <style>
         body { font-family: sans-serif; background: #2c3e50; color: white; padding: 20px; }
         .controls { background: white; color: #333; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        .room-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
-        .room-card { background: #ecf0f1; color: #333; padding: 10px; border-radius: 5px; border-left: 5px solid #bdc3c7; font-size: 0.85rem; }
-        .room-card.active { border-left-color: #27ae60; background: #fff; }
+        .section { background: #34495e; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .room-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+        .room-card { background: #ecf0f1; color: #333; padding: 8px; border-radius: 5px; border-left: 5px solid #bdc3c7; font-size: 0.8rem; }
         .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
         .done { background: #27ae60; }
         .yet { background: #bdc3c7; border: 1px solid #7f8c8d; }
-        button { padding: 12px 20px; font-size: 1rem; cursor: pointer; border: none; border-radius: 5px; color: white; margin: 5px; font-weight: bold; }
-        .btn-blue { background: #3498db; }
+        button { padding: 12px 18px; font-size: 1rem; cursor: pointer; border: none; border-radius: 5px; color: white; margin: 5px; font-weight: bold; }
         .btn-green { background: #27ae60; }
         .btn-purple { background: #8e44ad; }
         .btn-red { background: #e74c3c; }
-    </style>
+        ul { padding-left: 20px; font-size: 0.9rem; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; color: white; }
+        th, td { border: 1px solid #5d6d7e; padding: 8px; text-align: left; }
+        th { background: #2c3e50; }
+    </small></style>
 </head>
 <body>
-    <h1>授業管理パネル</h1>
-    <p>接続中の生徒: <b id="student-count">0</b>人 | 現在の状態: <b id="current-phase">待機中</b></p>
+    <h1>授業管理パネル (分析モード)</h1>
+    <p>接続数: <b id="student-count">0</b> | 状態: <b id="current-phase">待機中</b></p>
     
     <div class="controls">
-        <button class="btn-green" onclick="updatePhase('round1')">【第1回戦】開始 (新マッチング)</button>
-        <button class="btn-purple" onclick="updatePhase('round2')">【第2回戦】開始 (席替えマッチング)</button>
-        <button class="btn-red" onclick="resetGame()">全データをリセット</button>
+        <button class="btn-green" onclick="updatePhase('round1')">【1回戦】マッチング＆開始</button>
+        <button class="btn-purple" onclick="updatePhase('round2')">【2回戦】再マッチング＆開始</button>
+        <button class="btn-red" onclick="resetGame()">全リセット</button>
     </div>
 
-    <h3>各ルームの進捗 (●回答済 / ○未回答)</h3>
-    <div id="room-list" class="room-grid"></div>
+    <div class="section">
+        <h3>📊 懲役ランキング（ワースト順）</h3>
+        <table id="ranking-table">
+            <thead><tr><th>順位</th><th>名前</th><th>1回戦</th><th>2回戦</th><th>合計懲役</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
+        <div class="section">
+            <h3>😈 ドラマ発生ログ</h3>
+            <div id="betrayal-log"></div>
+        </div>
+        <div class="section">
+            <h3>🏠 各ルームの進捗</h3>
+            <div id="room-list" class="room-grid"></div>
+        </div>
+    </div>
 
 <script>
     const firebaseConfig = {
@@ -47,58 +66,101 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
-    db.ref('presence').on('value', s => document.getElementById('student-count').innerText = s.numChildren());
+    let studentNames = {};
+
+    db.ref('presence').on('value', s => {
+        studentNames = s.val() || {};
+        document.getElementById('student-count').innerText = Object.keys(studentNames).length;
+    });
+
     db.ref('gameMaster/phase').on('value', s => document.getElementById('current-phase').innerText = s.val() || "待機中");
 
     db.ref('rooms').on('value', snapshot => {
         const rooms = snapshot.val();
-        const listArea = document.getElementById('room-list');
-        listArea.innerHTML = "";
         if(!rooms) return;
 
-        db.ref('gameMaster/phase').once('value', pSnap => {
-            const phase = pSnap.val();
-            Object.keys(rooms).forEach(rId => {
-                const room = rooms[rId];
-                const p1_done = room[phase]?.p1_choice ? "done" : "yet";
-                const p2_done = room[phase]?.p2_choice ? "done" : "yet";
-                const card = document.createElement('div');
-                card.className = "room-card" + (room[phase] ? " active" : "");
-                card.innerHTML = `<b>${rId.toUpperCase()}</b><br>
-                    <span class="status-dot ${p1_done}"></span>P1 
-                    <span class="status-dot ${p2_done}"></span>P2`;
-                listArea.appendChild(card);
+        const listArea = document.getElementById('room-list');
+        const rankingBody = document.querySelector('#ranking-table tbody');
+        const logArea = document.getElementById('betrayal-log');
+        listArea.innerHTML = "";
+        logArea.innerHTML = "";
+        
+        let playerStats = {}; // IDごとの懲役集計
+        let logs = { round1: [], round2: [] };
+
+        Object.keys(rooms).forEach(rId => {
+            const room = rooms[rId];
+            const card = document.createElement('div');
+            card.className = "room-card";
+            let statusHtml = `<b>${rId}</b><br>`;
+
+            ['round1', 'round2'].forEach(rnd => {
+                const game = room[rnd];
+                if (!game) return;
+
+                const p1_c = game.p1_choice;
+                const p2_c = game.p2_choice;
+                statusHtml += `${rnd.slice(-1)}戦: <span class="status-dot ${p1_c?'done':'yet'}"></span><span class="status-dot ${p2_c?'done':'yet'}"></span><br>`;
+
+                if (p1_c && p2_c) {
+                    const calc = (c1, c2) => {
+                        if (c1 === "自白しない" && c2 === "自白しない") return 2;
+                        if (c1 === "自白しない" && c2 === "自白する") return 10;
+                        if (c1 === "自白する" && c2 === "自白しない") return 0;
+                        return 5;
+                    };
+                    const s1 = calc(p1_c, p2_c);
+                    const s2 = calc(p2_c, p1_c);
+
+                    // 統計加算
+                    [room.p1, room.p2].forEach((id, idx) => {
+                        if (id === "CPU") return;
+                        if (!playerStats[id]) playerStats[id] = { name: studentNames[id]?.name, r1: "-", r2: "-", total: 0 };
+                        const score = (idx === 0) ? s1 : s2;
+                        playerStats[id][rnd === 'round1' ? 'r1' : 'r2'] = score + "年";
+                        playerStats[id].total += score;
+                    });
+
+                    // ログ作成
+                    const n1 = studentNames[room.p1]?.name || "P1";
+                    const n2 = room.p2 === "CPU" ? "CPU" : (studentNames[room.p2]?.name || "P2");
+                    if (p1_c !== p2_c) {
+                        const betrayer = (p1_c === "自白する") ? n1 : n2;
+                        const victim = (p1_c === "自白する") ? n2 : n1;
+                        logs[rnd].push(`<li>😈 <b>${betrayer}</b> 😭 <b>${victim}</b></li>`);
+                    }
+                }
             });
+            card.innerHTML = statusHtml;
+            listArea.appendChild(card);
         });
+
+        // ランキング表示
+        const sorted = Object.values(playerStats).sort((a, b) => b.total - a.total);
+        rankingBody.innerHTML = sorted.map((p, i) => `<tr><td>${i+1}</td><td>${p.name}</td><td>${p.r1}</td><td>${p.r2}</td><td><b>${p.total}年</b></td></tr>`).join('');
+        
+        // ログ表示
+        logArea.innerHTML = `<b>1回戦:</b><ul>${logs.round1.join('') || "なし"}</ul><b>2回戦:</b><ul>${logs.round2.join('') || "なし"}</ul>`;
     });
 
     async function updatePhase(phase) {
         const snapshot = await db.ref('presence').once('value');
         const students = snapshot.val();
-        if (!students) return alert("生徒が接続していません");
-        
-        const ids = Object.keys(students);
-        ids.sort(() => Math.random() - 0.5);
-
+        if (!students) return alert("生徒がいません");
+        const ids = Object.keys(students).sort(() => Math.random() - 0.5);
         const rooms = {};
         for (let i = 0; i < ids.length; i += 2) {
             const rId = "room_" + (Math.floor(i/2) + 1);
-            const p1 = ids[i];
-            const p2 = ids[i+1] || "CPU";
-            
-            rooms[rId] = {
-                p1, p2,
-                [phase]: { p1_choice: null, p2_choice: (p2 === "CPU" ? "自白しない" : null) }
-            };
+            const p1 = ids[i], p2 = ids[i+1] || "CPU";
+            rooms[rId] = { p1, p2, [phase]: { p1_choice: null, p2_choice: (p2 === "CPU" ? "自白しない" : null) } };
             db.ref(`presence/${p1}`).update({ roomId: rId, playerNum: 'p1' });
             if(p2 !== "CPU") db.ref(`presence/${p2}`).update({ roomId: rId, playerNum: 'p2' });
         }
-
         await db.ref('rooms').set(rooms);
         await db.ref('gameMaster').update({ phase: phase });
     }
 
-    function resetGame() { if(confirm("全データを消去して待機状態に戻しますか？")) db.ref('/').set({gameMaster:{phase:'waiting'}}); }
+    function resetGame() { if(confirm("消去しますか？")) db.ref('/').set({gameMaster:{phase:'waiting'}}); }
 </script>
 </body>
 </html>
