@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>囚人のジレンマ - 表彰式</title>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #1a1a2e; color: white; padding: 40px; text-align: center; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 30px; }
+        .rank-card { background: #16213e; padding: 20px; border-radius: 15px; border: 2px solid #0f3460; }
+        h2 { color: #e94560; border-bottom: 2px solid #e94560; padding-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        td { padding: 10px; border-bottom: 1px solid #0f3460; text-align: left; }
+        .gold { color: #f1c40f; font-weight: bold; }
+        .silver { color: #bdc3c7; font-weight: bold; }
+        .bronze { color: #cd7f32; font-weight: bold; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; margin-left: 5px; }
+        .bg-peace { background: #27ae60; }
+        .bg-cold { background: #c0392b; }
+    </style>
+</head>
+<body>
+    <h1>📊 最終リザルト・表彰式</h1>
+    <div class="grid">
+        <div class="rank-card">
+            <h2>刑期が長いランキング</h2>
+            <p><small>（裏切られ続けた不運な囚人）</small></p>
+            <table id="worst-rank"></table>
+        </div>
+
+        <div class="rank-card">
+            <h2>平和主義ランキング</h2>
+            <p><small>（一度も裏切らなかった誠実な囚人）</small></p>
+            <table id="peace-rank"></table>
+        </div>
+
+        <div class="rank-card">
+            <h2>冷徹な戦略家ランキング</h2>
+            <p><small>（合理的に裏切りを選んだ囚人）</small></p>
+            <table id="cold-rank"></table>
+        </div>
+    </div>
+
+<script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyD_lw01IiPvvBjinfw2UZ9NuqqurGm5yIw",
+        authDomain: "prisonergame-27a20.firebaseapp.com",
+        databaseURL: "https://prisonergame-27a20-default-rtdb.firebaseio.com",
+        projectId: "prisonergame-27a20",
+        storageBucket: "prisonergame-27a20.firebasestorage.app",
+        messagingSenderId: "456926790656",
+        appId: "1:456926790656:web:7e59a56e6a68ed612444e5"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    db.ref().on('value', snapshot => {
+        const data = snapshot.val();
+        if (!data || !data.rooms || !data.presence) return;
+        
+        const rooms = data.rooms;
+        const students = data.presence;
+        let stats = {};
+
+        // データ集計
+        Object.keys(rooms).forEach(rId => {
+            const room = rooms[rId];
+            ['round1', 'round2'].forEach(rnd => {
+                const g = room[rnd];
+                if (g && g.p1_choice && g.p2_choice) {
+                    const calc = (c1, c2) => (c1==="自白しない"&&c2==="自白しない"?2 : c1==="自白しない"&&c2==="自白する"?10 : c1==="自白する"&&c2==="自白しない"?0 : 5);
+                    
+                    [ {id: room.p1, c: g.p1_choice, op: g.p2_choice}, {id: room.p2, c: g.p2_choice, op: g.p1_choice} ].forEach(p => {
+                        if (p.id === "CPU") return;
+                        if (!stats[p.id]) stats[p.id] = { name: students[p.id].name, prison: 0, nonConfessCount: 0, confessCount: 0 };
+                        stats[p.id].prison += calc(p.c, p.op);
+                        if (p.c === "自白しない") stats[p.id].nonConfessCount++;
+                        else stats[p.id].confessCount++;
+                    });
+                }
+            });
+        });
+
+        const list = Object.values(stats);
+        
+        // 1. 懲役ワースト (刑期順)
+        const worst = [...list].sort((a,b) => b.prison - a.prison).slice(0, 5);
+        document.getElementById('worst-rank').innerHTML = worst.map((p,i) => `<tr><td class="${i===0?'gold':''}">${i+1}位</td><td>${p.name}</td><td>${p.prison}年</td></tr>`).join('');
+
+        // 2. 平和主義 (自白しないカウント順)
+        const peace = list.filter(p => p.nonConfessCount >= 1).sort((a,b) => b.nonConfessCount - a.nonConfessCount).slice(0, 5);
+        document.getElementById('peace-rank').innerHTML = peace.map((p,i) => `<tr><td>🕊️</td><td>${p.name}</td><td><span class="badge bg-peace">${p.nonConfessCount}回協力</span></td></tr>`).join('');
+
+        // 3. 戦略家 (自白するカウント順)
+        const cold = list.filter(p => p.confessCount >= 1).sort((a,b) => b.confessCount - a.confessCount).slice(0, 5);
+        document.getElementById('cold-rank').innerHTML = cold.map((p,i) => `<tr><td>😈</td><td>${p.name}</td><td><span class="badge bg-cold">${p.confessCount}回裏切り</span></td></tr>`).join('');
+    });
+</script>
+</body>
+</html>
